@@ -9,7 +9,6 @@ use std::{
 use tokio::{
     io::copy_bidirectional,
     net::{TcpListener, TcpStream},
-    time::sleep,
 };
 
 use regex::Regex;
@@ -105,10 +104,17 @@ fn start_tmux() {
 }
 
 async fn wait_for_proxy() -> bool {
-    for _ in 0..(BUFFER_TIMEOUT * 10) {
+    let start = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(BUFFER_TIMEOUT);
+
+    loop {
+        if start.elapsed() >= timeout {
+            break;
+        }
+
         match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
             Ok(_) => return true,
-            Err(_) => sleep(Duration::from_millis(100)).await,
+            Err(_) => tokio::task::yield_now().await, // Yield to allow other tasks to run
         }
     }
     false

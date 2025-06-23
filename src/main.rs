@@ -107,12 +107,7 @@ async fn handle_client(mut client: TcpStream) -> std::io::Result<()> {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let listener = unsafe {
-        match TcpListener::from_std(std::net::TcpListener::from_raw_fd(3)) {
-            Ok(l) => l,
-            Err(_) => TcpListener::from_std(std::net::TcpListener::from_raw_fd(0))?,
-        }
-    };
+    let listener = TcpListener::from_std(unsafe { std::net::TcpListener::from_raw_fd(3) })?;
 
     start_tmux();
 

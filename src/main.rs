@@ -128,7 +128,9 @@ async fn handle_client(mut client: TcpStream) -> std::io::Result<()> {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let listener = TcpListener::from_std(unsafe { std::net::TcpListener::from_raw_fd(3) })?;
+    let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
+    std_listener.set_nonblocking(true)?;
+    let listener = TcpListener::from_std(std_listener)?;
 
     start_tmux();
 

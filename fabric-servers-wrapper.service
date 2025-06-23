@@ -1,0 +1,13 @@
+[Unit]
+Description=Start all servers on tmux and forward Minecraft traffic
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/fabric-servers-tmux-wrapper
+; StandardInput=socket
+; StandardOutput=journal
+; StandardError=journal
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Socket-activated Minecraft proxy
+
+[Socket]
+ListenStream=25565
+NoDelay=true
+Service=fabric-servers-wrapper.service
+
+[Install]
+WantedBy=sockets.target

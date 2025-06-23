@@ -12,7 +12,10 @@ use tokio::{
     time::sleep,
 };
 
+use regex::Regex;
+
 static SRV_DIR: &str = ".local/share/srv";
+static SRV_STARTUP_SCRIPT: &str = "./run";
 static TMUX_SESSION: &str = "fabric-servers";
 static PROXY_PORT: u16 = 25564;
 static BUFFER_TIMEOUT: u64 = 25;
@@ -51,7 +54,19 @@ fn start_tmux() {
         return;
     }
 
-    let first = servers.remove(0);
+    // Create a case-insensitive regex to match '.*Velocity.*'
+    let re = Regex::new(".*Velocity.*").unwrap();
+
+    // Find the index of the first server matching the regex
+    let index = servers
+        .iter()
+        .position(|e| re.is_match(&e.file_name().to_string_lossy()));
+
+    let first = if let Some(i) = index {
+        servers.remove(i) // Remove the matching server
+    } else {
+        servers.remove(0) // Remove the first server if no match found
+    };
     let first_path = first.path();
 
     let _ = Command::new("tmux")
@@ -66,7 +81,7 @@ fn start_tmux() {
             first.file_name().to_str().unwrap(),
             "-c",
             first_path.to_str().unwrap(),
-            "./run",
+            SRV_STARTUP_SCRIPT,
         ])
         .output();
 
@@ -83,7 +98,7 @@ fn start_tmux() {
                 srv.file_name().to_str().unwrap(),
                 "-c",
                 srv_path.to_str().unwrap(),
-                "./run",
+                SRV_STARTUP_SCRIPT,
             ])
             .output();
     }

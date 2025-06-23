@@ -322,6 +322,7 @@ dependencies = [
  "log",
  "once_cell",
  "openssl",
+ "regex",
  "socks",
  "tokio",
 ]

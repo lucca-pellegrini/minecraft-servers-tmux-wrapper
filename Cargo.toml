@@ -1,0 +1,27 @@
+[package]
+name = "fabric-servers-tmux-wrapper"
+description = "Verify XMRigISO server signatures using Ed25519"
+authors = ["2025 Lucca Pellegrini <lucca@verticordia.com>"]
+license = "Apache-2.0"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.0.0", features = ["derive"] }
+clap_complete = "4.0.0"
+curl = "0.4"
+dirs = "6.0.0"
+env_logger = "0.9"
+include-flate = "0.3"
+license = "3.6"
+log = "0.4"
+once_cell = "1.20"
+openssl = "0.10"
+socks = "0.3"
+tokio = { version = "1", features = ["full"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

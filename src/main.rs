@@ -28,15 +28,18 @@ static TMUX_SESSION: &str = "fabric-servers";
 static PROXY_PORT: u16 = 25564;
 static BUFFER_TIMEOUT: u64 = 25;
 
+// Determine path to the tmux socket
 fn get_tmux_socket_path() -> PathBuf {
     let runtime = env::var("XDG_RUNTIME_DIR").unwrap_or("/tmp".into());
     PathBuf::from(runtime).join("fabric-servers.sock")
 }
 
+// Initialize proxy and servers
 fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
     // To make cheap copies for asynchronous use
     let tmux_socket = Arc::new(get_tmux_socket_path());
 
+    // Kill any existing session
     let _ = Command::new("tmux")
         .args([
             "-S",
@@ -48,16 +51,17 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
         .stderr(Stdio::null())
         .output();
 
+    // Determine the server's root directory
     let server_root = dirs::home_dir().unwrap().join(SRV_DIR);
 
+    // Read directory to get server names
     let mut servers: Vec<_> = fs::read_dir(&server_root)
         .unwrap()
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         .collect();
 
-    servers.sort_by_key(|e| e.file_name());
-
+    // Raise an error if there are no servers to start
     if servers.is_empty() {
         eprintln!("No servers found.");
         return Err(io::Error::new(
@@ -66,6 +70,7 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
         ));
     }
 
+    // Determine the names of the windows from the server paths
     let window_names = servers
         .iter()
         .filter_map(|server| Some(server.file_name().to_string_lossy().into_owned()))
@@ -86,6 +91,7 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
     };
     let first_path = first.path();
 
+    // Spawn the session, starting the first server
     let _ = Command::new("tmux")
         .args([
             "-S",
@@ -102,6 +108,7 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
         ])
         .output();
 
+    // For all remaining servers, start them asynchronously
     for srv in servers {
         // Cheap Arc copy, for ownership shenanigans.
         let tmux_socket = tmux_socket.clone();
@@ -125,9 +132,11 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
         });
     }
 
+    // Return the window names
     Ok(window_names)
 }
 
+// Wait for proxy to start accepting connections
 async fn wait_for_proxy() -> bool {
     let start = tokio::time::Instant::now();
     let timeout = Duration::from_secs(BUFFER_TIMEOUT);
@@ -145,15 +154,18 @@ async fn wait_for_proxy() -> bool {
     false
 }
 
+// Handle an individual client connection by copying data bidirectionally
 async fn handle_client(mut client: TcpStream) -> std::io::Result<()> {
     let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
     let _ = copy_bidirectional(&mut client, &mut proxy).await;
     Ok(())
 }
 
+// Attempt to clean up servers gracefully
 async fn cleanup_servers(servers: Vec<String>) -> () {
     let tmux_socket = get_tmux_socket_path();
 
+    // Determine the PID of the main process in each pane's main window
     let server_pids: Vec<Pid> = servers
         .iter()
         .map(|window| {
@@ -181,6 +193,7 @@ async fn cleanup_servers(servers: Vec<String>) -> () {
 
     let mut tasks = Vec::new(); // Create a Vec to store JoinHandles
 
+    // Clean up servers asynchronously
     for pid in server_pids {
         let handle = tokio::spawn(async move {
             // Wait for a grace period of 10 seconds
@@ -216,6 +229,7 @@ async fn cleanup_servers(servers: Vec<String>) -> () {
     }
 }
 
+// Check if a process is still running by calling `kill -0` on it's PID
 fn is_process_running(pid: Pid) -> bool {
     Command::new("kill")
         .arg("-0")
@@ -227,10 +241,12 @@ fn is_process_running(pid: Pid) -> bool {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    // Get TcpListener from the systemd socket unit
     let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
     std_listener.set_nonblocking(true)?;
     let listener = TcpListener::from_std(std_listener)?;
 
+    // Start all servers
     let servers = match start_tmux_windows() {
         Ok(s) => s,
         Err(e) => {
@@ -239,6 +255,7 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    // Wait for proxy to accept connections (up to a timeout)
     if !wait_for_proxy().await {
         eprintln!("Velocity proxy did not start in time");
         exit(1);
@@ -247,19 +264,22 @@ async fn main() -> std::io::Result<()> {
     // Spawn a task to periodically check if the proxy is still online
     tokio::spawn(async {
         loop {
-            tokio::time::sleep(Duration::from_secs(5)).await; // Check every 5 seconds
+            // Check every 5 seconds
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
             match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
                 Ok(_) => continue, // Proxy is still online
                 Err(_) => {
                     eprintln!("Velocity proxy went offline");
                     cleanup_servers(servers).await;
                     eprintln!("Exiting gracefully");
-                    return;
+                    exit(0);
                 }
             }
         }
     });
 
+    // Handle client connections
     loop {
         let (client, _) = listener.accept().await?;
         tokio::spawn(async move {

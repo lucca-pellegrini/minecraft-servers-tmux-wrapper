@@ -36,14 +36,14 @@ all game servers, escalating to SIGKILL if necessary.
 
 1. Clone & build the binary:
    ```sh
-   git clone https://github.com/you/fabric-servers-tmux-wrapper.git
-   cd fabric-servers-tmux-wrapper
+   git clone https://github.com/lucca-pellegrini/minecraft-servers-tmux-wrapper.git
+   cd minecraft-servers-tmux-wrapper
    cargo build --release
    ```
 2. Install the binary:
    ```sh
-   install -D target/release/fabric-servers-tmux-wrapper ~/.local/bin/fabric-servers-tmux-wrapper
-   chmod +x ~/.local/bin/fabric-servers-tmux-wrapper
+   install -D target/release/minecraft-servers-tmux-wrapper ~/.local/bin/minecraft-servers-tmux-wrapper
+   chmod +x ~/.local/bin/minecraft-servers-tmux-wrapper
    ```
 3. Create your server directories and startup scripts:
    ```

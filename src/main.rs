@@ -3,6 +3,7 @@ use std::{
     os::unix::io::FromRawFd,
     path::PathBuf,
     process::{Command, Stdio, exit},
+    sync::Arc,
     time::Duration,
 };
 
@@ -33,7 +34,8 @@ fn get_tmux_socket_path() -> PathBuf {
 }
 
 fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
-    let tmux_socket = get_tmux_socket_path();
+    // To make cheap copies for asynchronous use
+    let tmux_socket = Arc::new(get_tmux_socket_path());
 
     let _ = Command::new("tmux")
         .args([
@@ -101,21 +103,26 @@ fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
         .output();
 
     for srv in servers {
+        // Cheap Arc copy, for ownership shenanigans.
+        let tmux_socket = tmux_socket.clone();
         let srv_path = srv.path();
-        let _ = Command::new("tmux")
-            .args([
-                "-S",
-                tmux_socket.to_str().unwrap(),
-                "new-window",
-                "-t",
-                TMUX_SESSION,
-                "-n",
-                srv.file_name().to_str().unwrap(),
-                "-c",
-                srv_path.to_str().unwrap(),
-                SRV_STARTUP_SCRIPT,
-            ])
-            .output();
+
+        tokio::spawn(async move {
+            let _ = Command::new("tmux")
+                .args([
+                    "-S",
+                    tmux_socket.to_str().unwrap(),
+                    "new-window",
+                    "-t",
+                    TMUX_SESSION,
+                    "-n",
+                    srv.file_name().to_str().unwrap(),
+                    "-c",
+                    srv_path.to_str().unwrap(),
+                    SRV_STARTUP_SCRIPT,
+                ])
+                .output();
+        });
     }
 
     Ok(window_names)

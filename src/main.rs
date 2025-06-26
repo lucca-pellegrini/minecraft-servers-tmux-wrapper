@@ -234,7 +234,7 @@ async fn main() -> std::io::Result<()> {
 
     if !wait_for_proxy().await {
         eprintln!("Velocity proxy did not start in time");
-        std::process::exit(1);
+        exit(1);
     }
 
     // Spawn a task to periodically check if the proxy is still online

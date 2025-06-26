@@ -179,7 +179,7 @@ This project is licensed under the Apache License, Version 2.0. See the
 - [systemd.service(5)](https://man.archlinux.org/man/systemd.service.5)
 - [systemd.socket(5)](https://man.archlinux.org/man/systemd.socket.5)
 - [sd_listen_fds(3)](https://man.archlinux.org/man/sd_listen_fds.3.en)
-- (Lennart Poettering’s blog post)[https://0pointer.de/blog/projects/socket-activation.html]
+- [Lennart Poettering’s blog post](https://0pointer.de/blog/projects/socket-activation.html)
 - [lazymc](https://github.com/timvisee/lazymc)
 - [Velocity proxy](https://papermc.io/software/velocity/)
 - [ViaVersion](https://viaversion.com/) for protocol compatibility

@@ -196,9 +196,6 @@ async fn cleanup_servers(servers: Vec<String>) -> () {
     // Clean up servers asynchronously
     for pid in server_pids {
         let handle = tokio::spawn(async move {
-            // Wait for a grace period of 10 seconds
-            tokio::time::sleep(Duration::from_secs(10)).await;
-
             // Try each signal up to three times
             for signal in [SIGTERM, SIGINT, SIGHUP] {
                 for _ in 0..3 {

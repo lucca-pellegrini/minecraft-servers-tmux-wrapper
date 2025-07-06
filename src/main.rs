@@ -179,37 +179,54 @@ async fn wait_for_proxy() -> bool {
 
 // Handle an individual client connection by copying data bidirectionally
 async fn handle_client(mut client: TcpStream) -> io::Result<()> {
+    // Don't you ever miss switch-case fallthrough like in C?
     match SERVER_STATE.load(Ordering::SeqCst) {
         ServerState::NotStarted => {
-            // Start all servers
-            match start_tmux_windows() {
-                Ok(s) => SERVERS.lock().unwrap().extend(s),
-                Err(e) => {
-                    eprintln!("Failed to start the tmux servers: {}", e);
-                    exit(1);
-                }
-            };
-
-            // Wait for proxy to accept connections (up to a timeout)
-            if !wait_for_proxy().await {
-                eprintln!("Velocity proxy did not start in time");
-                exit(1);
-            }
+            start_servers()?;
+            wait_for_proxy_or_exit().await?;
+            pass_connection(&mut client).await?;
         }
 
         ServerState::Starting => {
-            // Wait for proxy to accept connections (up to a timeout)
-            if !wait_for_proxy().await {
-                eprintln!("Velocity proxy did not start in time");
-                exit(1);
-            }
+            wait_for_proxy_or_exit().await?;
+            pass_connection(&mut client).await?;
         }
 
-        ServerState::Started => {}
+        ServerState::Started => {
+            pass_connection(&mut client).await?;
+        }
     }
+    Ok(())
+}
 
+// Start all tmux windows and update the SERVERS list
+fn start_servers() -> io::Result<()> {
+    match start_tmux_windows() {
+        Ok(s) => {
+            // Extend the SERVERS list with the started servers
+            SERVERS.lock().unwrap().extend(s);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to start the tmux servers: {}", e);
+            exit(1);
+        }
+    }
+}
+
+// Wait for the proxy to start, exiting if it does not start in time
+async fn wait_for_proxy_or_exit() -> io::Result<()> {
+    if !wait_for_proxy().await {
+        eprintln!("Velocity proxy did not start in time");
+        exit(1);
+    }
+    Ok(())
+}
+
+// Pass the client connection to the proxy and copy data bidirectionally
+async fn pass_connection(client: &mut TcpStream) -> io::Result<()> {
     let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
-    let _ = copy_bidirectional(&mut client, &mut proxy).await;
+    copy_bidirectional(client, &mut proxy).await?;
     Ok(())
 }
 

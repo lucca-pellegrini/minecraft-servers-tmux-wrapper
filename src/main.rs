@@ -188,13 +188,13 @@ async fn handle_client(mut client: TcpStream) -> io::Result<()> {
     match SERVER_STATE.load(Ordering::SeqCst) {
         ServerState::NotStarted => {
             // Create a buffer to read the packet
-            let mut buf = BytesMut::with_capacity(1024); // Use BytesMut instead of Vec<u8>
-            let n = client.read_buf(&mut buf).await?; // Use read_buf for reading into BytesMut
+            let mut buf = BytesMut::with_capacity(1024);
+            let n = client.read_buf(&mut buf).await?;
             buf.truncate(n);
 
             // Create a PacketDecoder
             let mut decoder = PacketDecoder::new();
-            decoder.queue_bytes(buf);
+            decoder.queue_bytes(buf.clone()); // Clone buf to keep the original data
 
             // Decode the Handshake packet
             if let Ok(Some(frame)) = decoder.try_next_packet() {
@@ -204,39 +204,29 @@ async fn handle_client(mut client: TcpStream) -> io::Result<()> {
                             // This is a login attempt
                             start_servers()?;
 
-                            // Re-encode the handshake packet
-                            let mut encoder = PacketEncoder::new();
-                            encoder
-                                .append_packet(&handshake)
-                                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
                             // Wait for the proxy to start
                             wait_for_proxy_or_exit().await?;
 
                             // Connect to the proxy
                             let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
 
-                            // Send the encoded handshake packet to the proxy
-                            proxy.write_all(&encoder.take()).await?;
+                            // Send the original handshake packet to the proxy
+                            proxy.write_all(&buf).await?;
 
                             // Start bidirectional data transfer
                             copy_bidirectional(&mut client, &mut proxy).await?;
                             return Ok(());
                         }
                         _ => {
-                            // Handle other states if necessary
+                            drop(client);
+                            return Ok(());
                         }
                     }
                 }
             }
-
-            pass_connection(&mut client).await?;
         }
-        ServerState::Starting => {
+        ServerState::Starting | ServerState::Started => {
             wait_for_proxy_or_exit().await?;
-            pass_connection(&mut client).await?;
-        }
-        ServerState::Started => {
             pass_connection(&mut client).await?;
         }
     }

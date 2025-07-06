@@ -8,8 +8,13 @@ use std::{
 };
 
 use tokio::{
-    io::copy_bidirectional,
+    io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::{TcpListener, TcpStream},
+};
+
+use valence_protocol::{
+    PacketDecoder, PacketEncoder,
+    packets::handshaking::handshake_c2s::{HandshakeC2s, HandshakeNextState},
 };
 
 use nix::{
@@ -21,6 +26,7 @@ use nix::{
 };
 
 use atomic_enum::atomic_enum;
+use bytes::BytesMut;
 use regex::Regex;
 
 #[atomic_enum]
@@ -35,7 +41,7 @@ static SRV_DIR: &str = ".local/share/srv";
 static SRV_STARTUP_SCRIPT: &str = "./run";
 static TMUX_SESSION: &str = "fabric-servers";
 static PROXY_PORT: u16 = 25564;
-static BUFFER_TIMEOUT: u64 = 25;
+static BUFFER_TIMEOUT: u64 = 90;
 static SERVER_STATE: AtomicServerState = AtomicServerState::new(ServerState::NotStarted);
 static SERVERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -179,23 +185,62 @@ async fn wait_for_proxy() -> bool {
 
 // Handle an individual client connection by copying data bidirectionally
 async fn handle_client(mut client: TcpStream) -> io::Result<()> {
-    // Don't you ever miss switch-case fallthrough like in C?
     match SERVER_STATE.load(Ordering::SeqCst) {
         ServerState::NotStarted => {
-            start_servers()?;
-            wait_for_proxy_or_exit().await?;
+            // Create a buffer to read the packet
+            let mut buf = BytesMut::with_capacity(1024); // Use BytesMut instead of Vec<u8>
+            let n = client.read_buf(&mut buf).await?; // Use read_buf for reading into BytesMut
+            buf.truncate(n);
+
+            // Create a PacketDecoder
+            let mut decoder = PacketDecoder::new();
+            decoder.queue_bytes(buf);
+
+            // Decode the Handshake packet
+            if let Ok(Some(frame)) = decoder.try_next_packet() {
+                if let Ok(handshake) = frame.decode::<HandshakeC2s>() {
+                    match handshake.next_state {
+                        HandshakeNextState::Login => {
+                            // This is a login attempt
+                            start_servers()?;
+
+                            // Re-encode the handshake packet
+                            let mut encoder = PacketEncoder::new();
+                            encoder
+                                .append_packet(&handshake)
+                                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+                            // Wait for the proxy to start
+                            wait_for_proxy_or_exit().await?;
+
+                            // Connect to the proxy
+                            let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
+
+                            // Send the encoded handshake packet to the proxy
+                            proxy.write_all(&encoder.take()).await?;
+
+                            // Start bidirectional data transfer
+                            copy_bidirectional(&mut client, &mut proxy).await?;
+                            return Ok(());
+                        }
+                        _ => {
+                            // Handle other states if necessary
+                        }
+                    }
+                }
+            }
+
             pass_connection(&mut client).await?;
         }
-
         ServerState::Starting => {
             wait_for_proxy_or_exit().await?;
             pass_connection(&mut client).await?;
         }
-
         ServerState::Started => {
             pass_connection(&mut client).await?;
         }
     }
+
     Ok(())
 }
 

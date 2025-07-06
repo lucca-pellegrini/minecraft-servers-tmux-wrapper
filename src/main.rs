@@ -3,7 +3,7 @@ use std::{
     os::unix::io::FromRawFd,
     path::PathBuf,
     process::{Command, Stdio, exit},
-    sync::Arc,
+    sync::{Arc, Mutex, atomic::Ordering},
     time::Duration,
 };
 
@@ -20,13 +20,24 @@ use nix::{
     unistd::Pid,
 };
 
+use atomic_enum::atomic_enum;
 use regex::Regex;
+
+#[atomic_enum]
+#[derive(PartialEq)]
+enum ServerState {
+    NotStarted = 0,
+    Starting,
+    Started,
+}
 
 static SRV_DIR: &str = ".local/share/srv";
 static SRV_STARTUP_SCRIPT: &str = "./run";
 static TMUX_SESSION: &str = "fabric-servers";
 static PROXY_PORT: u16 = 25564;
 static BUFFER_TIMEOUT: u64 = 25;
+static SERVER_STATE: AtomicServerState = AtomicServerState::new(ServerState::NotStarted);
+static SERVERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 // Determine path to the tmux socket
 fn get_tmux_socket_path() -> PathBuf {
@@ -35,7 +46,16 @@ fn get_tmux_socket_path() -> PathBuf {
 }
 
 // Initialize proxy and servers
-fn start_tmux_windows() -> Result<Vec<String>, std::io::Error> {
+fn start_tmux_windows() -> Result<Vec<String>, io::Error> {
+    if SERVER_STATE.load(Ordering::SeqCst) != ServerState::NotStarted {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "Startup task is already running.",
+        ));
+    }
+
+    SERVER_STATE.store(ServerState::Starting, Ordering::SeqCst);
+
     // To make cheap copies for asynchronous use
     let tmux_socket = Arc::new(get_tmux_socket_path());
 
@@ -147,7 +167,10 @@ async fn wait_for_proxy() -> bool {
         }
 
         match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
-            Ok(_) => return true,
+            Ok(_) => {
+                SERVER_STATE.store(ServerState::Started, Ordering::SeqCst);
+                return true;
+            }
             Err(_) => tokio::task::yield_now().await, // Yield to allow other tasks to run
         }
     }
@@ -155,7 +178,36 @@ async fn wait_for_proxy() -> bool {
 }
 
 // Handle an individual client connection by copying data bidirectionally
-async fn handle_client(mut client: TcpStream) -> std::io::Result<()> {
+async fn handle_client(mut client: TcpStream) -> io::Result<()> {
+    match SERVER_STATE.load(Ordering::SeqCst) {
+        ServerState::NotStarted => {
+            // Start all servers
+            match start_tmux_windows() {
+                Ok(s) => SERVERS.lock().unwrap().extend(s),
+                Err(e) => {
+                    eprintln!("Failed to start the tmux servers: {}", e);
+                    exit(1);
+                }
+            };
+
+            // Wait for proxy to accept connections (up to a timeout)
+            if !wait_for_proxy().await {
+                eprintln!("Velocity proxy did not start in time");
+                exit(1);
+            }
+        }
+
+        ServerState::Starting => {
+            // Wait for proxy to accept connections (up to a timeout)
+            if !wait_for_proxy().await {
+                eprintln!("Velocity proxy did not start in time");
+                exit(1);
+            }
+        }
+
+        ServerState::Started => {}
+    }
+
     let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
     let _ = copy_bidirectional(&mut client, &mut proxy).await;
     Ok(())
@@ -226,7 +278,7 @@ async fn cleanup_servers(servers: Vec<String>) -> () {
     }
 }
 
-// Check if a process is still running by calling `kill -0` on it's PID
+// Check if a process is still running by calling `kill -0` on its PID
 fn is_process_running(pid: Pid) -> bool {
     Command::new("kill")
         .arg("-0")
@@ -237,26 +289,11 @@ fn is_process_running(pid: Pid) -> bool {
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> io::Result<()> {
     // Get TcpListener from the systemd socket unit
     let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
     std_listener.set_nonblocking(true)?;
     let listener = TcpListener::from_std(std_listener)?;
-
-    // Start all servers
-    let servers = match start_tmux_windows() {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to start the tmux servers: {}", e);
-            exit(1);
-        }
-    };
-
-    // Wait for proxy to accept connections (up to a timeout)
-    if !wait_for_proxy().await {
-        eprintln!("Velocity proxy did not start in time");
-        exit(1);
-    }
 
     // Spawn a task to periodically check if the proxy is still online
     tokio::spawn(async {
@@ -264,13 +301,20 @@ async fn main() -> std::io::Result<()> {
             // Check every 5 seconds
             tokio::time::sleep(Duration::from_secs(5)).await;
 
-            match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
-                Ok(_) => continue, // Proxy is still online
-                Err(_) => {
-                    eprintln!("Velocity proxy went offline");
-                    cleanup_servers(servers).await;
-                    eprintln!("Exiting gracefully");
-                    exit(0);
+            // Only check the proxy if the servers have started
+            if SERVER_STATE.load(Ordering::SeqCst) == ServerState::Started {
+                match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
+                    Ok(_) => continue, // Proxy is still online
+                    Err(_) => {
+                        eprintln!("Velocity proxy went offline");
+
+                        // Clone the servers list before awaiting
+                        let servers = SERVERS.lock().unwrap().clone();
+
+                        cleanup_servers(servers).await;
+                        eprintln!("Exiting gracefully");
+                        exit(0);
+                    }
                 }
             }
         }

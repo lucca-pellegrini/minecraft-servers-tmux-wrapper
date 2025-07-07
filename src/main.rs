@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{Engine, prelude::BASE64_STANDARD};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::{TcpListener, TcpStream},
@@ -19,7 +20,10 @@ use tokio::{
 
 use valence_protocol::{
     PacketDecoder, PacketEncoder,
-    packets::handshaking::handshake_c2s::{HandshakeC2s, HandshakeNextState},
+    packets::{
+        handshaking::handshake_c2s::{HandshakeC2s, HandshakeNextState},
+        status::QueryResponseS2c,
+    },
 };
 
 use nix::{
@@ -33,6 +37,7 @@ use nix::{
 use atomic_enum::atomic_enum;
 use bytes::BytesMut;
 use regex::Regex;
+use serde_json::{Value, json};
 
 #[atomic_enum]
 #[derive(PartialEq)]
@@ -230,9 +235,31 @@ async fn handle_client(mut client: TcpStream) -> anyhow::Result<()> {
                             copy_bidirectional(&mut client, &mut proxy).await?;
                             return Ok(());
                         }
-                        _ => {
-                            drop(client);
-                            return Ok(());
+                        HandshakeNextState::Status => {
+                            // Construct status response JSON
+                            let mut favicon_buf = "data:image/png;base64,".to_owned();
+                            BASE64_STANDARD
+                                .encode_string(include_bytes!("favicon.png"), &mut favicon_buf);
+
+                            let description: Value =
+                                serde_json::from_str(include_str!("server_description.json"))?;
+
+                            let json = json!({
+                                "version": {
+                                    "name": "1.21.1",
+                                    "protocol": 763,
+                                },
+                                "description": description,
+                                "favicon": Value::String(favicon_buf),
+                            });
+
+                            // Respond to the status packet.
+                            let mut encoder = PacketEncoder::new();
+                            let pkt = QueryResponseS2c {
+                                json: &json.to_string(),
+                            };
+                            encoder.append_packet(&pkt)?;
+                            client.write_all(&encoder.take()).await?;
                         }
                     }
                 }
@@ -413,7 +440,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Handle client connections
     loop {
-        let (client, _) = listener.accept().await?;
+        let (client, addr) = listener.accept().await?;
         let last_connection_time_clone = Arc::clone(&last_connection_time);
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -423,7 +450,7 @@ async fn main() -> anyhow::Result<()> {
 
         tokio::spawn(async move {
             if let Err(e) = handle_client(client).await {
-                eprintln!("Error forwarding: {}", e);
+                eprintln!("Error handling {}: {}", addr, e);
             }
         });
     }

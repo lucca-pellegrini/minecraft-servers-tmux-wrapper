@@ -1,0 +1,11 @@
+[
+  {"text": "A ", "color": "white"},
+  [
+    {"text": "Rede ", "bold": true},
+    {"text": "Verticordia", "color": "green"},
+    {"text": "™ ", "bold": false}
+  ],
+  "está ",
+  {"text": "desligada.\n", "color": "red"},
+  {"text": "Faça login para iniciar.", "color": "#ee9900"}
+]

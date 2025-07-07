@@ -826,6 +826,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "atomic_enum",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "clap_complete",
@@ -839,6 +840,7 @@ dependencies = [
  "once_cell",
  "openssl",
  "regex",
+ "serde_json",
  "socks",
  "tokio",
  "valence",

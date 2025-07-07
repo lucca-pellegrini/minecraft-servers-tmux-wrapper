@@ -3,8 +3,11 @@ use std::{
     os::unix::io::FromRawFd,
     path::PathBuf,
     process::{Command, Stdio, exit},
-    sync::{Arc, Mutex, atomic::Ordering},
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::{
@@ -40,8 +43,9 @@ enum ServerState {
 static SRV_DIR: &str = ".local/share/srv";
 static SRV_STARTUP_SCRIPT: &str = "./run";
 static TMUX_SESSION: &str = "fabric-servers";
-static PROXY_PORT: u16 = 25564;
-static BUFFER_TIMEOUT: u64 = 90;
+static PROXY_PORT: u16 = 25564; // Port where the main Velocity proxy will listen
+static BUFFER_TIMEOUT: u64 = 90; // How long to await for proxy to start listening
+static INIT_TIMEOUT: u64 = 25; // How long to wait for client connections before the servers start
 static SERVER_STATE: AtomicServerState = AtomicServerState::new(ServerState::NotStarted);
 static SERVERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -372,9 +376,46 @@ async fn main() -> io::Result<()> {
         }
     });
 
+    // Initialize an atomic timestamp with the current time
+    let last_connection_time = Arc::new(AtomicU64::new(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    ));
+
+    // Task to monitor inactivity and exit if no connections are received
+    let last_connection_time_clone = Arc::clone(&last_connection_time);
+    tokio::spawn(async move {
+        while SERVER_STATE.load(Ordering::SeqCst) == ServerState::NotStarted {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            let last_time = last_connection_time_clone.load(Ordering::SeqCst);
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            if current_time - last_time >= INIT_TIMEOUT {
+                eprintln!(
+                    "No client connections received for {} seconds. Exiting.",
+                    INIT_TIMEOUT
+                );
+                exit(0);
+            }
+        }
+    });
+
     // Handle client connections
     loop {
         let (client, _) = listener.accept().await?;
+        let last_connection_time_clone = Arc::clone(&last_connection_time);
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        last_connection_time_clone.store(current_time, Ordering::SeqCst);
+
         tokio::spawn(async move {
             if let Err(e) = handle_client(client).await {
                 eprintln!("Error forwarding: {}", e);

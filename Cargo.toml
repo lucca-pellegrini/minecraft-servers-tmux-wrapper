@@ -1,6 +1,6 @@
 [package]
 name = "fabric-servers-tmux-wrapper"
-description = "Verify XMRigISO server signatures using Ed25519"
+description = "Socket-activated daemon to manage a Minecraft server network"
 authors = ["2025 Lucca Pellegrini <lucca@verticordia.com>"]
 license = "Apache-2.0"
 version = "0.1.0"

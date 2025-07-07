@@ -201,7 +201,7 @@ async fn handle_client(mut client: TcpStream) -> io::Result<()> {
 
         ServerState::NotStarted => {
             // Create a buffer to read the packet
-            let mut buf = BytesMut::with_capacity(1024);
+            let mut buf = BytesMut::with_capacity(4096);
             let n = client.read_buf(&mut buf).await?;
             buf.truncate(n);
 

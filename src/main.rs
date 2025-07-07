@@ -58,7 +58,7 @@ fn get_tmux_socket_path() -> PathBuf {
 }
 
 // Initialize proxy and servers
-fn start_tmux_windows() -> Result<Vec<String>, io::Error> {
+fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
     if SERVER_STATE.load(Ordering::SeqCst) != ServerState::NotStarted {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -190,7 +190,7 @@ async fn wait_for_proxy() -> bool {
 }
 
 // Handle an individual client connection by copying data bidirectionally
-async fn handle_client(mut client: TcpStream) -> io::Result<()> {
+async fn handle_client(mut client: TcpStream) -> anyhow::Result<()> {
     match SERVER_STATE.load(Ordering::SeqCst) {
         ServerState::Started => pass_connection(&mut client).await?,
 
@@ -244,7 +244,7 @@ async fn handle_client(mut client: TcpStream) -> io::Result<()> {
 }
 
 // Start all tmux windows and update the SERVERS list
-fn start_servers() -> io::Result<()> {
+fn start_servers() -> anyhow::Result<()> {
     match start_tmux_windows() {
         Ok(s) => {
             // Extend the SERVERS list with the started servers
@@ -259,7 +259,7 @@ fn start_servers() -> io::Result<()> {
 }
 
 // Wait for the proxy to start, exiting if it does not start in time
-async fn wait_for_proxy_or_exit() -> io::Result<()> {
+async fn wait_for_proxy_or_exit() -> anyhow::Result<()> {
     if !wait_for_proxy().await {
         eprintln!("Velocity proxy did not start in time");
         exit(1);
@@ -268,7 +268,7 @@ async fn wait_for_proxy_or_exit() -> io::Result<()> {
 }
 
 // Pass the client connection to the proxy and copy data bidirectionally
-async fn pass_connection(client: &mut TcpStream) -> io::Result<()> {
+async fn pass_connection(client: &mut TcpStream) -> anyhow::Result<()> {
     let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
     copy_bidirectional(client, &mut proxy).await?;
     Ok(())
@@ -350,7 +350,7 @@ fn is_process_running(pid: Pid) -> bool {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> anyhow::Result<()> {
     // Get TcpListener from the systemd socket unit
     let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
     std_listener.set_nonblocking(true)?;

@@ -824,6 +824,7 @@ dependencies = [
 name = "fabric-servers-tmux-wrapper"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "atomic_enum",
  "bytes",
  "clap",

@@ -192,6 +192,13 @@ async fn wait_for_proxy() -> bool {
 // Handle an individual client connection by copying data bidirectionally
 async fn handle_client(mut client: TcpStream) -> io::Result<()> {
     match SERVER_STATE.load(Ordering::SeqCst) {
+        ServerState::Started => pass_connection(&mut client).await?,
+
+        ServerState::Starting => {
+            wait_for_proxy_or_exit().await?;
+            pass_connection(&mut client).await?;
+        }
+
         ServerState::NotStarted => {
             // Create a buffer to read the packet
             let mut buf = BytesMut::with_capacity(1024);
@@ -230,10 +237,6 @@ async fn handle_client(mut client: TcpStream) -> io::Result<()> {
                     }
                 }
             }
-        }
-        ServerState::Starting | ServerState::Started => {
-            wait_for_proxy_or_exit().await?;
-            pass_connection(&mut client).await?;
         }
     }
 

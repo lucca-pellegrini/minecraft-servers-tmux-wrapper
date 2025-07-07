@@ -2,6 +2,7 @@
 
 use std::{
     env, fs, io,
+    net::SocketAddr,
     os::unix::io::FromRawFd,
     path::PathBuf,
     process::{Command, Stdio, exit},
@@ -174,34 +175,39 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
 }
 
 // Wait for proxy to start accepting connections
-async fn wait_for_proxy() -> bool {
+async fn wait_for_proxy() -> anyhow::Result<(), io::Error> {
     let start = tokio::time::Instant::now();
     let timeout = Duration::from_secs(BUFFER_TIMEOUT);
 
     loop {
         if start.elapsed() >= timeout {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Timed out while waiting for proxy to start.",
+            ));
         }
 
         match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
             Ok(_) => {
                 SERVER_STATE.store(ServerState::Started, Ordering::SeqCst);
-                return true;
+                return Ok(());
             }
             Err(_) => tokio::task::yield_now().await, // Yield to allow other tasks to run
         }
     }
-    false
 }
 
 // Handle an individual client connection by copying data bidirectionally
-async fn handle_client(mut client: TcpStream) -> anyhow::Result<()> {
+async fn handle_client(mut client: TcpStream, addr: SocketAddr) -> anyhow::Result<()> {
     match SERVER_STATE.load(Ordering::SeqCst) {
-        ServerState::Started => pass_connection(&mut client).await?,
+        ServerState::Started => return pass_connection(&mut client).await,
 
         ServerState::Starting => {
-            wait_for_proxy_or_exit().await?;
-            pass_connection(&mut client).await?;
+            wait_for_proxy().await.unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                exit(1);
+            });
+            return pass_connection(&mut client).await;
         }
 
         ServerState::NotStarted => {
@@ -217,57 +223,75 @@ async fn handle_client(mut client: TcpStream) -> anyhow::Result<()> {
             // Decode the Handshake packet
             if let Ok(Some(frame)) = decoder.try_next_packet() {
                 if let Ok(handshake) = frame.decode::<HandshakeC2s>() {
-                    match handshake.next_state {
-                        HandshakeNextState::Login => {
-                            // This is a login attempt
-                            start_servers()?;
-
-                            // Wait for the proxy to start
-                            wait_for_proxy_or_exit().await?;
-
-                            // Connect to the proxy
-                            let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
-
-                            // Send the original handshake packet to the proxy
-                            proxy.write_all(&buf).await?;
-
-                            // Start bidirectional data transfer
-                            copy_bidirectional(&mut client, &mut proxy).await?;
-                            return Ok(());
-                        }
-                        HandshakeNextState::Status => {
-                            // Construct status response JSON
-                            let mut favicon_buf = "data:image/png;base64,".to_owned();
-                            BASE64_STANDARD
-                                .encode_string(include_bytes!("favicon.png"), &mut favicon_buf);
-
-                            let description: Value =
-                                serde_json::from_str(include_str!("server_description.json"))?;
-
-                            let json = json!({
-                                "version": {
-                                    "name": "1.21.1",
-                                    "protocol": 763,
-                                },
-                                "description": description,
-                                "favicon": Value::String(favicon_buf),
-                            });
-
-                            // Respond to the status packet.
-                            let mut encoder = PacketEncoder::new();
-                            let pkt = QueryResponseS2c {
-                                json: &json.to_string(),
-                            };
-                            encoder.append_packet(&pkt)?;
-                            client.write_all(&encoder.take()).await?;
-                        }
-                    }
+                    return handle_handshake(handshake, buf, client, addr).await;
                 }
             }
+
+            Ok(())
         }
     }
+}
 
-    Ok(())
+// Respond to a handshake.
+async fn handle_handshake(
+    handshake: HandshakeC2s<'_>,
+    packet_bytes: BytesMut,
+    mut client: TcpStream,
+    addr: SocketAddr,
+) -> anyhow::Result<()> {
+    match handshake.next_state {
+        // If it's a login attempt, start the servers and pass the connection, including the
+        // original packet.
+        HandshakeNextState::Login => {
+            eprintln!("Starting servers due to login attempt from {}", addr);
+            start_servers()?;
+
+            // Wait for the proxy to start
+            wait_for_proxy().await.unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                exit(1);
+            });
+
+            // Connect to the proxy
+            let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
+
+            // Send the original handshake packet to the proxy
+            proxy.write_all(&packet_bytes).await?;
+
+            // Start bidirectional data transfer
+            copy_bidirectional(&mut client, &mut proxy).await?;
+            return Ok(());
+        }
+
+        // If it's a status request, respond with a valid JSON response.
+        // See <https://minecraft.wiki/w/Java_Edition_protocol/Server_List_Ping?oldid=3034438>
+        HandshakeNextState::Status => {
+            // Construct status response JSON
+            let mut favicon_buf = "data:image/png;base64,".to_owned();
+            BASE64_STANDARD.encode_string(include_bytes!("favicon.png"), &mut favicon_buf);
+
+            let description: Value = serde_json::from_str(include_str!("server_description.json"))?;
+
+            let json = json!({
+                "version": {
+                    "name": "1.21.1",
+                    "protocol": 763,
+                },
+                "description": description,
+                "favicon": Value::String(favicon_buf),
+            });
+
+            // Respond to the status packet.
+            let mut encoder = PacketEncoder::new();
+            let pkt = QueryResponseS2c {
+                json: &json.to_string(),
+            };
+            encoder.append_packet(&pkt)?;
+            client.write_all(&encoder.take()).await?;
+
+            Ok(())
+        }
+    }
 }
 
 // Start all tmux windows and update the SERVERS list
@@ -283,15 +307,6 @@ fn start_servers() -> anyhow::Result<()> {
             exit(1);
         }
     }
-}
-
-// Wait for the proxy to start, exiting if it does not start in time
-async fn wait_for_proxy_or_exit() -> anyhow::Result<()> {
-    if !wait_for_proxy().await {
-        eprintln!("Velocity proxy did not start in time");
-        exit(1);
-    }
-    Ok(())
 }
 
 // Pass the client connection to the proxy and copy data bidirectionally
@@ -449,7 +464,7 @@ async fn main() -> anyhow::Result<()> {
         last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
         tokio::spawn(async move {
-            if let Err(e) = handle_client(client).await {
+            if let Err(e) = handle_client(client, addr).await {
                 eprintln!("Error handling {}: {}", addr, e);
             }
         });

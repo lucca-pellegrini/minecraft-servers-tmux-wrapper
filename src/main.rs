@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 use std::{
     env, fs, io,
     os::unix::io::FromRawFd,

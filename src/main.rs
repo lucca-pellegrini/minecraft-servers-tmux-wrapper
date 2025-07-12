@@ -37,15 +37,11 @@ async fn main() -> anyhow::Result<()> {
         loop {
             // Check every 5 seconds
             tokio::time::sleep(Duration::from_secs(5)).await;
-            trace!("Checking if proxy is still running");
 
             // Only check the proxy if the servers have started
             if SERVER_STATE.load(Ordering::SeqCst) == ServerState::Started {
                 match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
-                    Ok(_) => {
-                        trace!("Proxy is still online");
-                        continue;
-                    }
+                    Ok(_) => continue,
                     Err(_) => {
                         warn!("Velocity proxy went offline");
 
@@ -75,7 +71,6 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         while SERVER_STATE.load(Ordering::SeqCst) == ServerState::NotStarted {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            trace!("Checking for client connections.");
 
             let last_time = last_connection_time_clone.load(Ordering::SeqCst);
             let current_time = SystemTime::now()
@@ -121,5 +116,15 @@ async fn main() -> anyhow::Result<()> {
                 warn!("Error handling {}: {}", addr, e);
             }
         });
+
+        trace!(
+            "Finished handling connection from {} in {}s",
+            addr,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                - current_time
+        );
     }
 }

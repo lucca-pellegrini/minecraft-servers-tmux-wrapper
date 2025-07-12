@@ -24,7 +24,7 @@ use crate::config::*;
 async fn main() -> anyhow::Result<()> {
     // Initialize the journald logger
     JournalLog::new().unwrap().install().unwrap();
-    log::set_max_level(LevelFilter::Info);
+    log::set_max_level(LevelFilter::Trace);
 
     // Get TcpListener from the systemd socket unit
     let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };

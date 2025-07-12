@@ -6,12 +6,11 @@ use log::trace;
 use tokio::net::TcpListener;
 
 pub async fn get_systemd_sockets() -> anyhow::Result<HashMap<u16, TcpListener>, io::Error> {
-    trace!("LISTEN_FDS: {}", env::var("LISTEN_FDS").unwrap());
     let listen_fds = env::var("LISTEN_FDS")
         .ok()
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0);
-    trace!("Listening on {} FDs", listen_fds);
+    trace!("Listening on {} file descriptors", listen_fds);
 
     let mut result = HashMap::new();
 
@@ -21,8 +20,9 @@ pub async fn get_systemd_sockets() -> anyhow::Result<HashMap<u16, TcpListener>, 
         if let Ok(local_addr) = std_listener.local_addr() {
             std_listener.set_nonblocking(true)?;
             trace!(
-                "Storing listener {} for port {}",
+                "Storing listener {} from descriptor {} for port {}",
                 std_listener.local_addr().unwrap(),
+                fd,
                 local_addr.port()
             );
 

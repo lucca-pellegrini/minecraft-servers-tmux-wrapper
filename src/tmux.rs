@@ -160,7 +160,7 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
     let mut servers: Vec<_> = fs::read_dir(&server_root)
         .unwrap()
         .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))
         .collect();
 
     // Raise an error if there are no servers to start

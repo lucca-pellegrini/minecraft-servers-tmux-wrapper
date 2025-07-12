@@ -25,6 +25,7 @@ openssl = "0.10"
 regex = "1.11.1"
 serde_json = "1.0.140"
 socks = "0.3"
+systemd-journal-logger = "2.2.2"
 tokio = { version = "1", features = ["full"] }
 valence_protocol = { git = "https://github.com/valence-rs/valence", features = ["compression", "encryption"] }
 

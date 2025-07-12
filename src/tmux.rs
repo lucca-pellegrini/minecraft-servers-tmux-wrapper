@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use log::{debug, error, info, trace, warn};
 use nix::{
     sys::signal::{
         Signal::{SIGHUP, SIGINT, SIGKILL, SIGTERM},
@@ -27,12 +28,16 @@ use crate::config::*;
 pub fn start_servers() -> anyhow::Result<()> {
     match start_tmux_windows() {
         Ok(s) => {
+            trace!("Tmux windows started successfully");
+
             // Extend the SERVERS list with the started servers
             SERVERS.lock().unwrap().extend(s);
+            trace!("Extended servers list with the started servers");
+
             Ok(())
         }
         Err(e) => {
-            eprintln!("Failed to start the tmux servers: {}", e);
+            error!("Failed to start the tmux servers: {}", e);
             exit(1);
         }
     }
@@ -40,6 +45,8 @@ pub fn start_servers() -> anyhow::Result<()> {
 
 // Attempt to clean up servers gracefully
 pub async fn cleanup_servers(servers: Vec<String>) -> () {
+    trace!("Cleaning up servers");
+
     let tmux_socket = get_tmux_socket_path();
 
     // Determine the PID of the main process in each pane's main window
@@ -57,6 +64,12 @@ pub async fn cleanup_servers(servers: Vec<String>) -> () {
                 ])
                 .output()
                 .expect(&format!("Failed to query PID for server: {}", window));
+
+            trace!(
+                "Got PID {} for server {}",
+                String::from_utf8_lossy(&output.stdout),
+                window
+            );
 
             Pid::from_raw(
                 String::from_utf8_lossy(&output.stdout)
@@ -77,11 +90,11 @@ pub async fn cleanup_servers(servers: Vec<String>) -> () {
             for signal in [SIGTERM, SIGINT, SIGHUP] {
                 for _ in 0..3 {
                     if !is_process_running(pid) {
-                        eprintln!("Process {} terminated gracefully.", pid);
+                        debug!("Process {} terminated gracefully.", pid);
                         return;
                     }
 
-                    eprintln!("Sending {} to process {}.", signal.as_str(), pid);
+                    debug!("Sending {} to process {}.", signal.as_str(), pid);
                     let _ = kill(pid, signal);
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
@@ -89,22 +102,28 @@ pub async fn cleanup_servers(servers: Vec<String>) -> () {
 
             // Finally, send SIGKILL
             if is_process_running(pid) {
-                eprintln!("Sending SIGKILL to process {}.", pid);
+                warn!("Sending SIGKILL to process {}.", pid);
                 let _ = kill(pid, SIGKILL);
             }
         });
 
+        trace!("Spawned task {} to clean up process {}", handle.id(), pid);
         tasks.push(handle); // Store the JoinHandle
     }
 
     // Await all tasks
     for task in tasks {
+        trace!("Waiting for cleanup task {}", task.id());
         let _ = task.await;
     }
+
+    info!("Cleaned up all servers");
 }
 
 // Initialize proxy and servers
 fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
+    trace!("Starting tmux windows");
+
     if SERVER_STATE.load(Ordering::SeqCst) != ServerState::NotStarted {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -113,6 +132,7 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
     }
 
     SERVER_STATE.store(ServerState::Starting, Ordering::SeqCst);
+    trace!("Stored server state");
 
     // To make cheap copies for asynchronous use
     let tmux_socket = Arc::new(get_tmux_socket_path());
@@ -131,6 +151,10 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
 
     // Determine the server's root directory
     let server_root = dirs::home_dir().unwrap().join(SRV_DIR);
+    trace!(
+        "Determined servers root at {}",
+        server_root.to_str().unwrap()
+    );
 
     // Read directory to get server names
     let mut servers: Vec<_> = fs::read_dir(&server_root)
@@ -141,7 +165,7 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
 
     // Raise an error if there are no servers to start
     if servers.is_empty() {
-        eprintln!("No servers found.");
+        error!("No servers found.");
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "Found no servers in the directory",
@@ -163,8 +187,13 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
         .position(|e| re.is_match(&e.file_name().to_string_lossy()));
 
     let first = if let Some(i) = index {
+        debug!(
+            "Determined proxy server to be {}",
+            servers[i].file_name().to_str().unwrap()
+        );
         servers.remove(i) // Remove the matching server
     } else {
+        warn!("Could not determine proxy server. Carrying on as if nothing were amiss...");
         servers.remove(0) // Remove the first server if no match found
     };
     let first_path = first.path();
@@ -185,12 +214,21 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
             SRV_STARTUP_SCRIPT,
         ])
         .output();
+    trace!(
+        "Spawned main tmux session for server {}",
+        first_path.to_str().unwrap()
+    );
 
     // For all remaining servers, start them asynchronously
     for srv in servers {
         // Cheap Arc copy, for ownership shenanigans.
         let tmux_socket = tmux_socket.clone();
         let srv_path = srv.path();
+
+        trace!(
+            "Spawning tmux window for server {}",
+            srv.file_name().to_str().unwrap()
+        );
 
         tokio::spawn(async move {
             let _ = Command::new("tmux")

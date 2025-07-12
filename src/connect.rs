@@ -3,6 +3,7 @@
 use std::{io, net::SocketAddr, process::exit, sync::atomic::Ordering, time::Duration};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
+use log::{error, info, trace};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
@@ -26,18 +27,37 @@ use crate::{BUFFER_TIMEOUT, tmux};
 
 // Handle an individual client connection by copying data bidirectionally
 pub async fn handle_client(mut client: TcpStream, addr: SocketAddr) -> anyhow::Result<()> {
+    trace!("Handling connection from {}", addr);
+
     match SERVER_STATE.load(Ordering::SeqCst) {
-        ServerState::Started => return pass_connection(&mut client).await,
+        ServerState::Started => {
+            trace!(
+                "Server already started, passing connection from {} to proxy",
+                addr
+            );
+            return pass_connection(&mut client).await;
+        }
 
         ServerState::Starting => {
+            trace!("Server starting, waiting to pass connection from {}", addr);
             wait_for_proxy().await.unwrap_or_else(|e| {
-                eprintln!("{}", e);
+                error!(
+                    "Failed while waiting for server to start to pass connection from {}: {}",
+                    addr, e
+                );
                 exit(1);
             });
+
+            trace!(
+                "Server successfully started, passing connection from {} to proxy",
+                addr
+            );
             return pass_connection(&mut client).await;
         }
 
         ServerState::NotStarted => {
+            trace!("Server not started, checking packets from {}", addr);
+
             // Create a buffer to read the packet
             let mut buf = BytesMut::with_capacity(4096);
             let n = client.read_buf(&mut buf).await?;
@@ -49,7 +69,10 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr) -> anyhow::R
 
             // Decode the Handshake packet
             if let Ok(Some(frame)) = decoder.try_next_packet() {
+                trace!("Decoded minecraft packet from {}", addr);
+
                 if let Ok(handshake) = frame.decode::<HandshakeC2s>() {
+                    trace!("Packet from {} is a C2S handshake", addr);
                     return handle_handshake(handshake, buf, client, addr).await;
                 }
             }
@@ -70,22 +93,28 @@ async fn handle_handshake(
         // If it's a login attempt, start the servers and pass the connection, including the
         // original packet.
         HandshakeNextState::Login => {
-            eprintln!("Starting servers due to login attempt from {}", addr);
+            info!("Starting servers due to login attempt from {}", addr);
             tmux::start_servers()?;
 
             // Wait for the proxy to start
             wait_for_proxy().await.unwrap_or_else(|e| {
-                eprintln!("{}", e);
+                error!(
+                    "Failed while waiting for server to start to pass connection from {}: {}",
+                    addr, e
+                );
                 exit(1);
             });
+            info!("Servers started for {}", addr);
 
             // Connect to the proxy
             let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
 
             // Send the original handshake packet to the proxy
+            trace!("Passing original handshake packet from {} to proxy", addr);
             proxy.write_all(&packet_bytes).await?;
 
             // Start bidirectional data transfer
+            trace!("Passing connection from {} to proxy", addr);
             copy_bidirectional(&mut client, &mut proxy).await?;
             return Ok(());
         }
@@ -93,6 +122,8 @@ async fn handle_handshake(
         // If it's a status request, respond with a valid JSON response.
         // See <https://minecraft.wiki/w/Java_Edition_protocol/Server_List_Ping?oldid=3034438>
         HandshakeNextState::Status => {
+            trace!("Packet from {} is a status request", addr);
+
             // Construct status response JSON
             let mut favicon_buf = "data:image/png;base64,".to_owned();
             BASE64_STANDARD.encode_string(include_bytes!("favicon.png"), &mut favicon_buf);
@@ -114,6 +145,8 @@ async fn handle_handshake(
                 json: &json.to_string(),
             };
             encoder.append_packet(&pkt)?;
+
+            trace!("Sending status response to {}", addr);
             client.write_all(&encoder.take()).await?;
 
             Ok(())

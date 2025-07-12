@@ -86,7 +86,7 @@ pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Err
 
             trace!(
                 "Got PID {} for server {}",
-                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stdout).trim(),
                 window
             );
 
@@ -237,7 +237,7 @@ fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
         .output();
     trace!(
         "Spawned main tmux session for server {}",
-        first_path.to_str().unwrap()
+        first_path.file_name().unwrap().to_str().unwrap()
     );
 
     // For all remaining servers, start them asynchronously

@@ -1,0 +1,10 @@
+[Unit]
+Description=Socket-activated proxy for BlueMap
+
+[Socket]
+ListenStream=31898
+NoDelay=true
+Service=fabric-servers-wrapper.service
+
+[Install]
+WantedBy=sockets.target

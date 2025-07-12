@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+mod bluemap;
 mod config;
-mod connect;
+mod minecraft_client;
+mod socket;
 mod tmux;
 
 use std::{
-    os::unix::io::FromRawFd,
     process::exit,
     sync::{
         Arc,
@@ -14,9 +15,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use log::{LevelFilter, debug, info, trace, warn};
+use log::{LevelFilter, debug, error, info, trace, warn};
 use systemd_journal_logger::JournalLog;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 use crate::config::*;
 
@@ -26,11 +27,11 @@ async fn main() -> anyhow::Result<()> {
     JournalLog::new().unwrap().install().unwrap();
     log::set_max_level(LevelFilter::Trace);
 
-    // Get TcpListener from the systemd socket unit
-    let std_listener = unsafe { std::net::TcpListener::from_raw_fd(3) };
-    std_listener.set_nonblocking(true)?;
-    let listener = TcpListener::from_std(std_listener)?;
-    debug!("Initialized TcpListener");
+    // Create a vector for task handles.
+    let mut tasks = Vec::new();
+
+    // Get the TcpListeners from the systemd socket units
+    let mut sockets = socket::get_systemd_sockets().await?;
 
     // Spawn a task to periodically check if the proxy is still online
     tokio::spawn(async {
@@ -48,9 +49,16 @@ async fn main() -> anyhow::Result<()> {
                         // Clone the servers list before awaiting
                         let servers = SERVERS.lock().unwrap().clone();
 
-                        tmux::cleanup_servers(servers).await;
-                        info!("Exiting gracefully");
-                        exit(0);
+                        match tmux::cleanup_servers(servers).await {
+                            Ok(()) => {
+                                info!("Exiting gracefully");
+                                exit(0);
+                            }
+                            Err(e) => {
+                                error!("Fatal error when cleaning up servers: {}", e);
+                                exit(1);
+                            }
+                        }
                     }
                 }
             }
@@ -68,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Task to monitor inactivity and exit if no connections are received
     let last_connection_time_clone = Arc::clone(&last_connection_time);
-    tokio::spawn(async move {
+    tasks.push(tokio::spawn(async move {
         while SERVER_STATE.load(Ordering::SeqCst) == ServerState::NotStarted {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -93,38 +101,105 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         debug!("Servers are starting. Stopping client connection watcher task.");
-    });
+    }));
     debug!("Spawned client connection watcher task");
 
-    // Handle client connections
-    loop {
-        let (client, addr) = listener.accept().await?;
-        let last_connection_time_clone = Arc::clone(&last_connection_time);
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        last_connection_time_clone.store(current_time, Ordering::SeqCst);
+    if let Some(bm_listener) = sockets.remove(&BLUEMAP_PORT) {
+        let last_connection_time_bm = last_connection_time.clone();
+        debug!("Obtained TcpListener for BlueMap");
 
-        trace!(
-            "Received client connection from {}. Storing last connection time: {}",
-            addr, current_time
-        );
-
-        tokio::spawn(async move {
-            if let Err(e) = connect::handle_client(client, addr).await {
-                warn!("Error handling {}: {}", addr, e);
+        tasks.push(tokio::spawn(async move {
+            {
+                let mut bm_webroot = BLUEMAP_WEBROOT.lock().unwrap();
+                *bm_webroot = bluemap::find_bluemap_dir().unwrap();
             }
-        });
 
-        trace!(
-            "Finished handling connection from {} in {}s",
-            addr,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                - current_time
+            while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
+                match bm_listener.accept().await {
+                    Ok((sock, addr)) => {
+                        let last_connection_time_clone = Arc::clone(&last_connection_time_bm);
+                        let current_time = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        last_connection_time_clone.store(current_time, Ordering::SeqCst);
+
+                        trace!(
+                            "Received BlueMap connection from {}. Storing last connection time: {}",
+                            addr, current_time
+                        );
+                        tokio::spawn(async move {
+                            if let Err(e) = bluemap::handle_connection(sock).await {
+                                warn!("Bluemap handler error: {}", e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        warn!("Bluemap accept error: {}", e);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        }));
+    } else {
+        warn!(
+            "Could not find a listener for the BlueMap port ({}). Disabling.",
+            BLUEMAP_PORT
         );
     }
+
+    // Handle client connections
+    if let Some(mc_listener) = sockets.remove(&CLIENT_PORT) {
+        debug!("Obtained TcpListener for Minecraft Clients");
+
+        while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
+            match mc_listener.accept().await {
+                Ok((client, addr)) => {
+                    let last_connection_time_clone = Arc::clone(&last_connection_time);
+                    let current_time = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    last_connection_time_clone.store(current_time, Ordering::SeqCst);
+
+                    trace!(
+                        "Received client connection from {}. Storing last connection time: {}",
+                        addr, current_time
+                    );
+
+                    tasks.push(tokio::spawn(async move {
+                        if let Err(e) = minecraft_client::handle_client(client, addr).await {
+                            warn!("Error handling {}: {}", addr, e);
+                        }
+                    }));
+
+                    trace!(
+                        "Finished handling connection from {} in {}s",
+                        addr,
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            - current_time
+                    );
+                }
+                Err(e) => {
+                    warn!("Minecraft client accept error: {}", e);
+                }
+            }
+        }
+    } else {
+        error!(
+            "Systemd did not pass a file descriptor for the client port ({}). Panicking!",
+            CLIENT_PORT
+        );
+        exit(1);
+    }
+
+    for task in tasks {
+        trace!("Waiting for task {}", task.id());
+        let _ = task.await;
+    }
+
+    Ok(())
 }

@@ -44,7 +44,26 @@ pub fn start_servers() -> anyhow::Result<()> {
 }
 
 // Attempt to clean up servers gracefully
-pub async fn cleanup_servers(servers: Vec<String>) -> () {
+pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Error> {
+    match SERVER_STATE.load(Ordering::SeqCst) {
+        ServerState::ShuttingDown | ServerState::ShutDown => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Shutdown task already invoked.",
+            ));
+        }
+
+        ServerState::NotStarted => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Server is not running.",
+            ));
+        }
+
+        _ => {}
+    }
+
+    SERVER_STATE.store(ServerState::ShuttingDown, Ordering::SeqCst);
     trace!("Cleaning up servers");
 
     let tmux_socket = get_tmux_socket_path();
@@ -117,7 +136,9 @@ pub async fn cleanup_servers(servers: Vec<String>) -> () {
         let _ = task.await;
     }
 
+    SERVER_STATE.store(ServerState::ShutDown, Ordering::SeqCst);
     info!("Cleaned up all servers");
+    Ok(())
 }
 
 // Initialize proxy and servers

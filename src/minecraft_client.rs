@@ -3,7 +3,7 @@
 use std::{io, net::SocketAddr, process::exit, sync::atomic::Ordering, time::Duration};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
@@ -27,9 +27,14 @@ use crate::{BUFFER_TIMEOUT, tmux};
 
 // Handle an individual client connection by copying data bidirectionally
 pub async fn handle_client(mut client: TcpStream, addr: SocketAddr) -> anyhow::Result<()> {
-    trace!("Handling connection from {}", addr);
+    trace!("Handling client from {}", addr);
 
     match SERVER_STATE.load(Ordering::SeqCst) {
+        ServerState::ShuttingDown | ServerState::ShutDown => {
+            debug!("Server is shutting down. Dropping connection from {}", addr);
+            Ok(())
+        }
+
         ServerState::Started => {
             trace!(
                 "Server already started, passing connection from {} to proxy",

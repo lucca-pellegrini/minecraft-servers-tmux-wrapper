@@ -92,12 +92,6 @@ async fn main() -> anyhow::Result<()> {
                     INIT_TIMEOUT
                 );
                 exit(0);
-            } else {
-                trace!(
-                    "Timeout for client connections ({}s) not reached. Currently at {}s",
-                    INIT_TIMEOUT,
-                    current_time - last_time
-                );
             }
         }
         debug!("Servers are starting. Stopping client connection watcher task.");

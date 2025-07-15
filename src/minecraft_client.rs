@@ -79,7 +79,11 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr) -> anyhow::R
                 if let Ok(handshake) = frame.decode::<HandshakeC2s>() {
                     trace!("Packet from {} is a C2S handshake", addr);
                     return handle_handshake(handshake, buf, client, addr).await;
+                } else {
+                    trace!("Packet from {} is not a handshake packet. Ignoring", addr);
                 }
+            } else {
+                trace!("No minecraft packet from {}. Ignoring", addr);
             }
 
             Ok(())

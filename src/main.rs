@@ -105,7 +105,12 @@ async fn main() -> anyhow::Result<()> {
         tasks.push(tokio::spawn(async move {
             {
                 let mut bm_webroot = BLUEMAP_WEBROOT.lock().unwrap();
-                *bm_webroot = bluemap::find_bluemap_dir().unwrap();
+                if let Some(dir) = bluemap::find_bluemap_dir() {
+                    *bm_webroot = dir;
+                } else {
+                    error!("Could not find BlueMap Webroot. Connections will be ignored!");
+                    return;
+                }
             }
 
             while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {

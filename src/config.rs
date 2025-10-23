@@ -15,7 +15,7 @@ pub static PROXY_PORT: u16 = 25564; // Port where the main Velocity proxy will l
 pub static BLUEMAP_MOD_PORT: u16 = 8100; // Port where the BlueMap mod will listen
 
 // Global program state.
-pub static SERVERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+pub static SERVERS: RwLock<Vec<String>> = RwLock::new(Vec::new());
 pub static SERVER_STATE: RwLock<ServerState> = RwLock::new(ServerState::NotStarted);
 pub static BLUEMAP_WEBROOT: Mutex<String> = Mutex::new(String::new());
 pub static CONNECTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);

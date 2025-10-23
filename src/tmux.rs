@@ -31,7 +31,7 @@ pub fn start_servers() -> anyhow::Result<()> {
             trace!("Tmux windows started successfully");
 
             // Extend the SERVERS list with the started servers
-            SERVERS.lock().unwrap().extend(s);
+            SERVERS.write().unwrap().extend(s);
             trace!("Extended servers list with the started servers");
 
             Ok(())

@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
                         warn!("Velocity proxy went offline");
 
                         // Clone the servers list before awaiting
-                        let servers = SERVERS.lock().unwrap().clone();
+                        let servers = SERVERS.read().unwrap().clone();
 
                         match tmux::cleanup_servers(servers).await {
                             Ok(()) => {

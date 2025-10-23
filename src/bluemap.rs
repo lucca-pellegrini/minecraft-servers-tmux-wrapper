@@ -61,7 +61,8 @@ async fn serve_static(mut client: TcpStream) -> io::Result<()> {
     }
 
     // Securely join the requested path under the BLUEMAP_WEBROOT directory.
-    let full_path = sanitize_path(&BLUEMAP_WEBROOT.lock().unwrap(), &path);
+    let webroot = BLUEMAP_WEBROOT.get().unwrap();
+    let full_path = sanitize_path(webroot, &path);
 
     // Determine the type of request based on the path.
     let is_tiles = path.starts_with("/maps/") && path.contains("/tiles/");

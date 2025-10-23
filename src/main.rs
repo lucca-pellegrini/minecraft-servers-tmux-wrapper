@@ -103,14 +103,11 @@ async fn main() -> anyhow::Result<()> {
         debug!("Obtained TcpListener for BlueMap");
 
         tasks.push(tokio::spawn(async move {
-            {
-                let mut bm_webroot = BLUEMAP_WEBROOT.lock().unwrap();
-                if let Some(dir) = bluemap::find_bluemap_dir() {
-                    *bm_webroot = dir;
-                } else {
-                    error!("Could not find BlueMap Webroot. Connections will be ignored!");
-                    return;
-                }
+            if let Some(dir) = bluemap::find_bluemap_dir() {
+                BLUEMAP_WEBROOT.set(dir).unwrap();
+            } else {
+                error!("Could not find BlueMap Webroot. Connections will be ignored!");
+                return;
             }
 
             while *SERVER_STATE.read().unwrap() < ServerState::ShuttingDown {

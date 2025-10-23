@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use atomic_enum::atomic_enum;
-use std::sync::{Mutex, RwLock, atomic::AtomicU64};
+use std::sync::{OnceLock, RwLock, atomic::AtomicU64};
 
 // Condiguration constants.
 pub static SRV_DIR: &str = ".local/share/srv";
@@ -17,7 +17,7 @@ pub static BLUEMAP_MOD_PORT: u16 = 8100; // Port where the BlueMap mod will list
 // Global program state.
 pub static SERVERS: RwLock<Vec<String>> = RwLock::new(Vec::new());
 pub static SERVER_STATE: RwLock<ServerState> = RwLock::new(ServerState::NotStarted);
-pub static BLUEMAP_WEBROOT: Mutex<String> = Mutex::new(String::new());
+pub static BLUEMAP_WEBROOT: OnceLock<String> = OnceLock::new();
 pub static CONNECTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[atomic_enum]

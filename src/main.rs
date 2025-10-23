@@ -160,33 +160,22 @@ async fn main() -> anyhow::Result<()> {
                         .as_secs();
                     last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
-                    trace!(
-                        "[{:06X}]: Finished handling connection from {} in {}s",
-                        id,
-                        addr,
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs()
-                            - current_time
-                    );
-
                     tasks.push(tokio::spawn(async move {
                         if let Err(e) = minecraft_client::handle_client(client, addr, id).await {
                             warn!("[{:06X}]: Error handling {}: {}", id, addr, e);
+                        } else {
+                            trace!(
+                                "[{:06X}]: Finished handling connection from {} in {}s",
+                                id,
+                                addr,
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs()
+                                    - current_time
+                            );
                         }
                     }));
-
-                    trace!(
-                        "[{:06X}]: Finished handling connection from {} in {}s",
-                        id,
-                        addr,
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs()
-                            - current_time
-                    );
                 }
                 Err(e) => {
                     warn!("Minecraft client accept error: {}", e);

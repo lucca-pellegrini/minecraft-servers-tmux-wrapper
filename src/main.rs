@@ -125,12 +125,12 @@ async fn main() -> anyhow::Result<()> {
                         last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
                         trace!(
-                            "[{:06}]: Received BlueMap connection from {}. Storing last connection time: {}",
+                            "[{:06X}]: Received BlueMap connection from {}. Storing last connection time: {}",
                             id, addr, current_time
                         );
                         tokio::spawn(async move {
                             if let Err(e) = bluemap::handle_connection(sock).await {
-                                warn!("[{:06}]: Bluemap handler error: {}", id, e);
+                                warn!("[{:06X}]: Bluemap handler error: {}", id, e);
                             }
                         });
                     }
@@ -164,18 +164,24 @@ async fn main() -> anyhow::Result<()> {
                     last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
                     trace!(
-                        "[{:06}]: Received client connection from {}. Storing last connection time: {}",
-                        id, addr, current_time
+                        "[{:06X}]: Finished handling connection from {} in {}s",
+                        id,
+                        addr,
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            - current_time
                     );
 
                     tasks.push(tokio::spawn(async move {
                         if let Err(e) = minecraft_client::handle_client(client, addr, id).await {
-                            warn!("[{:06}]: Error handling {}: {}", id, addr, e);
+                            warn!("[{:06X}]: Error handling {}: {}", id, addr, e);
                         }
                     }));
 
                     trace!(
-                        "[{:06}]: Finished handling connection from {} in {}s",
+                        "[{:06X}]: Finished handling connection from {} in {}s",
                         id,
                         addr,
                         SystemTime::now()

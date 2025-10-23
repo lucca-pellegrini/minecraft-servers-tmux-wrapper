@@ -27,12 +27,12 @@ use crate::{BUFFER_TIMEOUT, tmux};
 
 // Handle an individual client connection by copying data bidirectionally
 pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> anyhow::Result<()> {
-    trace!("[{:06}]: Handling client from {}", id, addr);
+    trace!("[{:06X}]: Handling client from {}", id, addr);
 
     match SERVER_STATE.load(Ordering::SeqCst) {
         ServerState::ShuttingDown | ServerState::ShutDown => {
             debug!(
-                "[{:06}]: Server is shutting down. Dropping connection from {}",
+                "[{:06X}]: Server is shutting down. Dropping connection from {}",
                 id, addr
             );
             Ok(())
@@ -40,7 +40,7 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> 
 
         ServerState::Started => {
             trace!(
-                "[{:06}]: Server already started, passing connection from {} to proxy",
+                "[{:06X}]: Server already started, passing connection from {} to proxy",
                 id, addr
             );
             return pass_connection(&mut client).await;
@@ -48,18 +48,18 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> 
 
         ServerState::Starting => {
             trace!(
-                "[{:06}]: Server starting, waiting to pass connection from {}",
+                "[{:06X}]: Server starting, waiting to pass connection from {}",
                 id, addr
             );
             wait_for_proxy().await.unwrap_or_else(|e| {
                 error!(
-                    "[{:06}]: Failed while waiting for server to start to pass connection from {}: {}",
+                    "[{:06X}]: Failed while waiting for server to start to pass connection from {}: {}",
                     id, addr, e
                 );
                 exit(1);
             });
             trace!(
-                "[{:06}]: Server successfully started, passing connection from {} to proxy",
+                "[{:06X}]: Server successfully started, passing connection from {} to proxy",
                 id, addr
             );
             return pass_connection(&mut client).await;
@@ -67,7 +67,7 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> 
 
         ServerState::NotStarted => {
             trace!(
-                "[{:06}]: Server not started, checking packets from {}",
+                "[{:06X}]: Server not started, checking packets from {}",
                 id, addr
             );
 
@@ -82,19 +82,19 @@ pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> 
 
             // Decode the Handshake packet
             if let Ok(Some(frame)) = decoder.try_next_packet() {
-                trace!("[{:06}]: Decoded minecraft packet from {}", id, addr);
+                trace!("[{:06X}]: Decoded minecraft packet from {}", id, addr);
 
                 if let Ok(handshake) = frame.decode::<HandshakeC2s>() {
-                    trace!("[{:06}]: Packet from {} is a C2S handshake", id, addr);
+                    trace!("[{:06X}]: Packet from {} is a C2S handshake", id, addr);
                     return handle_handshake(handshake, buf, client, addr, id).await;
                 } else {
                     trace!(
-                        "[{:06}]: Packet from {} is not a handshake packet. Ignoring",
+                        "[{:06X}]: Packet from {} is not a handshake packet. Ignoring",
                         id, addr
                     );
                 }
             } else {
-                trace!("[{:06}]: No minecraft packet from {}. Ignoring", id, addr);
+                trace!("[{:06X}]: No minecraft packet from {}. Ignoring", id, addr);
             }
 
             Ok(())
@@ -115,7 +115,7 @@ async fn handle_handshake(
         // original packet.
         HandshakeNextState::Login => {
             info!(
-                "[{:06}]: Starting servers due to login attempt from {}",
+                "[{:06X}]: Starting servers due to login attempt from {}",
                 id, addr
             );
             tmux::start_servers()?;
@@ -123,25 +123,25 @@ async fn handle_handshake(
             // Wait for the proxy to start
             wait_for_proxy().await.unwrap_or_else(|e| {
                  error!(
-                     "[{:06}]: Failed while waiting for server to start to pass connection from {}: {}",
+                     "[{:06X}]: Failed while waiting for server to start to pass connection from {}: {}",
                      id, addr, e
                  );
                  exit(1);
              });
-            info!("[{:06}]: Servers started for {}", id, addr);
+            info!("[{:06X}]: Servers started for {}", id, addr);
 
             // Connect to the proxy
             let mut proxy = TcpStream::connect(("127.0.0.1", PROXY_PORT)).await?;
 
             // Send the original handshake packet to the proxy
             trace!(
-                "[{:06}]: Passing original handshake packet from {} to proxy",
+                "[{:06X}]: Passing original handshake packet from {} to proxy",
                 id, addr
             );
             proxy.write_all(&packet_bytes).await?;
 
             // Start bidirectional data transfer
-            trace!("[{:06}]: Passing connection from {} to proxy", id, addr);
+            trace!("[{:06X}]: Passing connection from {} to proxy", id, addr);
             copy_bidirectional(&mut client, &mut proxy).await?;
             return Ok(());
         }
@@ -149,7 +149,7 @@ async fn handle_handshake(
         // If it's a status request, respond with a valid JSON response.
         // See <https://minecraft.wiki/w/Java_Edition_protocol/Server_List_Ping?oldid=3034438>
         HandshakeNextState::Status => {
-            trace!("[{:06}]: Packet from {} is a status request", id, addr);
+            trace!("[{:06X}]: Packet from {} is a status request", id, addr);
 
             // Construct status response JSON
             let mut favicon_buf = "data:image/png;base64,".to_owned();
@@ -173,7 +173,7 @@ async fn handle_handshake(
             };
             encoder.append_packet(&pkt)?;
 
-            trace!("[{:06}]: Sending status response to {}", id, addr);
+            trace!("[{:06X}]: Sending status response to {}", id, addr);
             client.write_all(&encoder.take()).await?;
 
             Ok(())

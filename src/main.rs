@@ -17,7 +17,7 @@ use std::{
 
 use log::{LevelFilter, debug, error, info, trace, warn};
 use systemd_journal_logger::JournalLog;
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, task::JoinSet};
 
 use crate::config::*;
 
@@ -27,8 +27,8 @@ async fn main() -> anyhow::Result<()> {
     JournalLog::new().unwrap().install().unwrap();
     log::set_max_level(LevelFilter::Trace);
 
-    // Create a vector for task handles.
-    let mut tasks = Vec::new();
+    // Create a JoinSet for task handles.
+    let mut joinset = JoinSet::new();
 
     // Get the TcpListeners from the systemd socket units
     let mut sockets = socket::get_systemd_sockets().await?;
@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Task to monitor inactivity and exit if no connections are received
     let last_connection_time_clone = Arc::clone(&last_connection_time);
-    tasks.push(tokio::spawn(async move {
+    joinset.spawn(async move {
         while *SERVER_STATE.read().unwrap() == ServerState::NotStarted {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -95,14 +95,14 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         debug!("Servers are starting. Stopping client connection watcher task.");
-    }));
+    });
     debug!("Spawned client connection watcher task");
 
     if let Some(bm_listener) = sockets.remove(&BLUEMAP_PORT) {
         let last_connection_time_bm = last_connection_time.clone();
         debug!("Obtained TcpListener for BlueMap");
 
-        tasks.push(tokio::spawn(async move {
+        joinset.spawn(async move {
             if let Some(dir) = bluemap::find_bluemap_dir() {
                 BLUEMAP_WEBROOT.set(dir).unwrap();
             } else {
@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-        }));
+        });
     } else {
         warn!(
             "Could not find a listener for the BlueMap port ({}). Disabling.",
@@ -160,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
                         .as_secs();
                     last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
-                    tasks.push(tokio::spawn(async move {
+                    joinset.spawn(async move {
                         if let Err(e) = minecraft_client::handle_client(client, addr, id).await {
                             warn!("[{:06X}]: Error handling {}: {}", id, addr, e);
                         } else {
@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
                                     - current_time
                             );
                         }
-                    }));
+                    });
                 }
                 Err(e) => {
                     warn!("Minecraft client accept error: {}", e);
@@ -190,9 +190,8 @@ async fn main() -> anyhow::Result<()> {
         exit(1);
     }
 
-    for task in tasks {
-        trace!("Waiting for task {}", task.id());
-        let _ = task.await;
+    while let Some(res) = joinset.join_next().await {
+        let _ = res;
     }
 
     Ok(())

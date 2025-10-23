@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
             while *SERVER_STATE.read().unwrap() < ServerState::ShuttingDown {
                 match bm_listener.accept().await {
                     Ok((sock, addr)) => {
-                        let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+                        let id = CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
                         let last_connection_time_clone = Arc::clone(&last_connection_time_bm);
                         let current_time = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
         while *SERVER_STATE.read().unwrap() < ServerState::ShuttingDown {
             match mc_listener.accept().await {
                 Ok((client, addr)) => {
-                    let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    let id = CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
                     let last_connection_time_clone = Arc::clone(&last_connection_time);
                     let current_time = SystemTime::now()
                         .duration_since(UNIX_EPOCH)

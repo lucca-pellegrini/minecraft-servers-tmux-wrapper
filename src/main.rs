@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
                         last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
                         trace!(
-                            "[{:06X}]: Received BlueMap connection from {}. Storing last connection time: {}",
+                            "[{:06X}]: Received BlueMap connection from {}. Storing last connection time: {:X}",
                             id, addr, current_time
                         );
                         tokio::spawn(async move {

@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             // Only check the proxy if the servers have started
-            if SERVER_STATE.load(Ordering::SeqCst) == ServerState::Started {
+            if *SERVER_STATE.read().unwrap() == ServerState::Started {
                 match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
                     Ok(_) => continue,
                     Err(_) => {
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
     // Task to monitor inactivity and exit if no connections are received
     let last_connection_time_clone = Arc::clone(&last_connection_time);
     tasks.push(tokio::spawn(async move {
-        while SERVER_STATE.load(Ordering::SeqCst) == ServerState::NotStarted {
+        while *SERVER_STATE.read().unwrap() == ServerState::NotStarted {
             tokio::time::sleep(Duration::from_secs(1)).await;
 
             let last_time = last_connection_time_clone.load(Ordering::SeqCst);
@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
+            while *SERVER_STATE.read().unwrap() < ServerState::ShuttingDown {
                 match bm_listener.accept().await {
                     Ok((sock, addr)) => {
                         let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -152,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(mc_listener) = sockets.remove(&CLIENT_PORT) {
         debug!("Obtained TcpListener for Minecraft Clients");
 
-        while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
+        while *SERVER_STATE.read().unwrap() < ServerState::ShuttingDown {
             match mc_listener.accept().await {
                 Ok((client, addr)) => {
                     let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);

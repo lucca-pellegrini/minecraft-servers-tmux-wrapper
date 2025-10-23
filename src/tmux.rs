@@ -4,7 +4,7 @@ use std::{
     env, fs, io,
     path::PathBuf,
     process::{Command, Stdio, exit},
-    sync::{Arc, atomic::Ordering},
+    sync::Arc,
     time::Duration,
 };
 
@@ -45,7 +45,7 @@ pub fn start_servers() -> anyhow::Result<()> {
 
 // Attempt to clean up servers gracefully
 pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Error> {
-    match SERVER_STATE.load(Ordering::SeqCst) {
+    match *SERVER_STATE.read().unwrap() {
         ServerState::ShuttingDown | ServerState::ShutDown => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -63,7 +63,7 @@ pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Err
         _ => {}
     }
 
-    SERVER_STATE.store(ServerState::ShuttingDown, Ordering::SeqCst);
+    *SERVER_STATE.write().unwrap() = ServerState::ShuttingDown;
     trace!("Cleaning up servers");
 
     let tmux_socket = get_tmux_socket_path();
@@ -136,7 +136,7 @@ pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Err
         let _ = task.await;
     }
 
-    SERVER_STATE.store(ServerState::ShutDown, Ordering::SeqCst);
+    *SERVER_STATE.write().unwrap() = ServerState::ShutDown;
     info!("Cleaned up all servers");
     Ok(())
 }
@@ -145,14 +145,14 @@ pub async fn cleanup_servers(servers: Vec<String>) -> anyhow::Result<(), io::Err
 fn start_tmux_windows() -> anyhow::Result<Vec<String>, io::Error> {
     trace!("Starting tmux windows");
 
-    if SERVER_STATE.load(Ordering::SeqCst) != ServerState::NotStarted {
+    if *SERVER_STATE.read().unwrap() != ServerState::NotStarted {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "Startup task is already running.",
         ));
     }
 
-    SERVER_STATE.store(ServerState::Starting, Ordering::SeqCst);
+    *SERVER_STATE.write().unwrap() = ServerState::Starting;
     trace!("Stored server state");
 
     // To make cheap copies for asynchronous use

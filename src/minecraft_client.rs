@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{io, net::SocketAddr, process::exit, sync::atomic::Ordering, time::Duration};
+use std::{io, net::SocketAddr, process::exit, time::Duration};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use log::{debug, error, info, trace};
@@ -29,7 +29,10 @@ use crate::{BUFFER_TIMEOUT, tmux};
 pub async fn handle_client(mut client: TcpStream, addr: SocketAddr, id: u64) -> anyhow::Result<()> {
     trace!("[{:06X}]: Handling client from {}", id, addr);
 
-    match SERVER_STATE.load(Ordering::SeqCst) {
+    // Dereferencing the RwLockReadGuard into a simple value (`state`) ensures it is `Send`,
+    // allowing the async function to be safely awaited without borrowing the lock directly.
+    let state = *SERVER_STATE.read().unwrap();
+    match state {
         ServerState::ShuttingDown | ServerState::ShutDown => {
             debug!(
                 "[{:06X}]: Server is shutting down. Dropping connection from {}",
@@ -196,7 +199,7 @@ async fn wait_for_proxy() -> anyhow::Result<(), io::Error> {
 
         match TcpStream::connect(("127.0.0.1", PROXY_PORT)).await {
             Ok(_) => {
-                SERVER_STATE.store(ServerState::Started, Ordering::SeqCst);
+                *SERVER_STATE.write().unwrap() = ServerState::Started;
                 return Ok(());
             }
             Err(_) => tokio::task::yield_now().await, // Yield to allow other tasks to run

@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
             while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
                 match bm_listener.accept().await {
                     Ok((sock, addr)) => {
+                        let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
                         let last_connection_time_clone = Arc::clone(&last_connection_time_bm);
                         let current_time = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -124,12 +125,12 @@ async fn main() -> anyhow::Result<()> {
                         last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
                         trace!(
-                            "Received BlueMap connection from {}. Storing last connection time: {}",
-                            addr, current_time
+                            "[{:06}]: Received BlueMap connection from {}. Storing last connection time: {}",
+                            id, addr, current_time
                         );
                         tokio::spawn(async move {
                             if let Err(e) = bluemap::handle_connection(sock).await {
-                                warn!("Bluemap handler error: {}", e);
+                                warn!("[{:06}]: Bluemap handler error: {}", id, e);
                             }
                         });
                     }
@@ -154,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
         while SERVER_STATE.load(Ordering::SeqCst) < ServerState::ShuttingDown {
             match mc_listener.accept().await {
                 Ok((client, addr)) => {
+                    let id = crate::config::CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
                     let last_connection_time_clone = Arc::clone(&last_connection_time);
                     let current_time = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -162,18 +164,19 @@ async fn main() -> anyhow::Result<()> {
                     last_connection_time_clone.store(current_time, Ordering::SeqCst);
 
                     trace!(
-                        "Received client connection from {}. Storing last connection time: {}",
-                        addr, current_time
+                        "[{:06}]: Received client connection from {}. Storing last connection time: {}",
+                        id, addr, current_time
                     );
 
                     tasks.push(tokio::spawn(async move {
-                        if let Err(e) = minecraft_client::handle_client(client, addr).await {
-                            warn!("Error handling {}: {}", addr, e);
+                        if let Err(e) = minecraft_client::handle_client(client, addr, id).await {
+                            warn!("[{:06}]: Error handling {}: {}", id, addr, e);
                         }
                     }));
 
                     trace!(
-                        "Finished handling connection from {} in {}s",
+                        "[{:06}]: Finished handling connection from {} in {}s",
+                        id,
                         addr,
                         SystemTime::now()
                             .duration_since(UNIX_EPOCH)

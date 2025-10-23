@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use atomic_enum::atomic_enum;
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::AtomicU64};
 
 // Condiguration constants.
 pub static SRV_DIR: &str = ".local/share/srv";
@@ -18,6 +18,7 @@ pub static BLUEMAP_MOD_PORT: u16 = 8100; // Port where the BlueMap mod will list
 pub static SERVERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub static SERVER_STATE: AtomicServerState = AtomicServerState::new(ServerState::NotStarted);
 pub static BLUEMAP_WEBROOT: Mutex<String> = Mutex::new(String::new());
+pub static CONNECTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[atomic_enum]
 #[derive(PartialEq, PartialOrd, Eq, Ord)]
@@ -26,5 +27,5 @@ pub enum ServerState {
     Starting,
     Started,
     ShuttingDown,
-    ShutDown
+    ShutDown,
 }
